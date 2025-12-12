@@ -43,7 +43,7 @@
     },
     {
       "name": "keyword.other.adelfa",
-      "match": "\\b(Theorem|Specification|Set|Schema|Subgoal|Vars|Nominals)\\b"
+      "match": "\\b(Theorem|Specification|Set|Schema|Subgoal|Vars|Nominals|Contexts)\\b"
     },
     {
       "name": "support.function.adelfa",
