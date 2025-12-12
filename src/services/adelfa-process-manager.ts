@@ -1,12 +1,15 @@
 import { spawn, type ChildProcess } from 'child_process';
 import type { ParsedPath } from 'path';
-import { window } from 'vscode';
+import { window, type OutputChannel } from 'vscode';
 
 export class AdelfaProcessManager {
   private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
   private process: ChildProcess | undefined;
 
-  constructor(private adelfaPath: string) {}
+  constructor(
+    private adelfaPath: string,
+    private outputChannel: OutputChannel,
+  ) {}
 
   async start(filePath: ParsedPath): Promise<void> {
     if (this.process) {
@@ -99,6 +102,7 @@ export class AdelfaProcessManager {
 
       const onData = (chunk: Buffer) => {
         data += chunk.toString();
+        this.outputChannel.append(data);
         if (data.includes('>>')) {
           data = data.replace(/.*>>/g, '');
           cleanup();
@@ -107,8 +111,10 @@ export class AdelfaProcessManager {
       };
 
       const onError = (error: Buffer) => {
+        const s = error.toString();
+        this.outputChannel.append(s);
         cleanup();
-        reject(error.toString());
+        reject(s);
       };
 
       const onTimeout = () => {
@@ -137,6 +143,7 @@ export class AdelfaProcessManager {
         return;
       }
 
+      this.outputChannel.appendLine(command);
       this.process!.stdin.write(command, err => {
         if (err) {
           cleanup();

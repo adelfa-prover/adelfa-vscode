@@ -93,7 +93,6 @@ export default [
       'prefer-const': 'error',
       'prefer-arrow-callback': 'error',
       'arrow-spacing': 'error',
-      'no-duplicate-imports': 'error',
       'no-useless-rename': 'error',
       'object-shorthand': 'error',
       'prefer-template': 'error',

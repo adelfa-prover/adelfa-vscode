@@ -7,6 +7,7 @@ import {
   type TextDocumentChangeEvent,
   type Disposable,
   type TextEditor,
+  type OutputChannel,
 } from 'vscode';
 import { AdelfaState } from './models/adelfa-state';
 import { AdelfaProcessManager } from './services/adelfa-process-manager';
@@ -32,10 +33,12 @@ export class AdelfaLanguageClient {
   private disposables: Disposable[] = [];
   private isProcessingUpdate = false;
   private activeTextEditor: TextEditor | undefined;
+  private outputChannel: OutputChannel;
 
   constructor(grammar: string) {
     this.state = new AdelfaState();
-    this.processManager = new AdelfaProcessManager(AdelfaConfig.adelfaPath);
+    this.outputChannel = window.createOutputChannel('Adelfa');
+    this.processManager = new AdelfaProcessManager(AdelfaConfig.adelfaPath, this.outputChannel);
     this.commandParser = new CommandParser();
     this.commandExecutor = new CommandExecutor(this.processManager, this.state);
     this.decorationManager = new DecorationManager();
@@ -59,6 +62,7 @@ export class AdelfaLanguageClient {
     this.decorationManager.dispose();
     this.infoProvider.dispose();
     this.state.reset();
+    this.outputChannel.dispose();
     this.disposables.forEach(d => {
       d.dispose();
     });
