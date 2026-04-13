@@ -17,7 +17,7 @@ import { DecorationManager } from './services/decoration-manager';
 import { InfoWebviewProvider } from './ui/info-webview-provider';
 import { AdelfaConfig } from './config/adelfa-config';
 import { maxPosition } from './util/position';
-import { Debouncer } from './util/debounce';
+import { EventCoordinator } from './state/event-coordinator';
 import './util/array';
 import type { Command } from './models/types';
 
@@ -28,10 +28,8 @@ export class AdelfaLanguageClient {
   private commandExecutor: CommandExecutor;
   private decorationManager: DecorationManager;
   private infoProvider: InfoWebviewProvider;
-  private cursorDebouncer: Debouncer;
-  private textChangeDebouncer: Debouncer;
+  private eventCoordinator: EventCoordinator;
   private disposables: Disposable[] = [];
-  private isProcessingUpdate = false;
   private activeTextEditor: TextEditor | undefined;
   private outputChannel: OutputChannel;
 
@@ -44,8 +42,18 @@ export class AdelfaLanguageClient {
     this.decorationManager = new DecorationManager();
     this.infoProvider = new InfoWebviewProvider(grammar, AdelfaConfig.shikiTheme);
 
-    this.cursorDebouncer = new Debouncer(100); // 100ms delay for cursor movements
-    this.textChangeDebouncer = new Debouncer(300); // 300ms delay for text changes
+    this.eventCoordinator = new EventCoordinator({
+      onCursor: async (event: TextEditorSelectionChangeEvent) => {
+        await this.updateFile();
+        const selection = event.selections[event.selections.length - 1];
+        this.showInfoAtPosition(selection!.active);
+      },
+      onTextChange: async (event: TextDocumentChangeEvent, earliestChangePosition: Position) => {
+        await this.undoCommandsUntilPosition(earliestChangePosition);
+        this.state.setFileContent(event.document.getText());
+        await this.updateFile();
+      },
+    });
 
     this.disposables.push(workspace.onDidChangeTextDocument(this.handleTextChange.bind(this)));
 
@@ -55,13 +63,12 @@ export class AdelfaLanguageClient {
   }
 
   async dispose(): Promise<void> {
-    this.cursorDebouncer.cancel();
-    this.textChangeDebouncer.cancel();
     this.commandExecutor.clearQueue();
+    this.eventCoordinator.dispose();
     await this.processManager.stop();
     this.decorationManager.dispose();
     this.infoProvider.dispose();
-    this.state.reset();
+    this.state.dispose();
     this.outputChannel.dispose();
     this.disposables.forEach(d => {
       d.dispose();
@@ -77,6 +84,7 @@ export class AdelfaLanguageClient {
       return;
     }
 
+    this.commandExecutor.clearQueue();
     this.state.reset();
     await this.processManager.stop();
 
@@ -92,7 +100,7 @@ export class AdelfaLanguageClient {
 
       this.state.setFileContent(editor.document.getText());
 
-      if (AdelfaConfig.autoOpen) {
+      if (AdelfaConfig.autoOpen && !this.infoProvider.isOpen()) {
         this.infoProvider.openPanel();
         this.showInfoAtPosition(window.activeTextEditor!.selection.active);
       }
@@ -109,25 +117,20 @@ export class AdelfaLanguageClient {
   }
 
   updateInfoView(event: TextEditorSelectionChangeEvent): void {
-    // Only listen to changes in the adelfa editor
     if (event.textEditor.document.languageId !== 'adelfa') {
       return;
     }
 
-    const debouncedUpdate = this.cursorDebouncer.debounce(async () => {
-      if (!this.isProcessingUpdate) {
-        this.isProcessingUpdate = true;
-        try {
-          await this.updateFile();
-          const selection = event.selections[event.selections.length - 1];
-          this.showInfoAtPosition(selection!.active);
-        } finally {
-          this.isProcessingUpdate = false;
-        }
-      }
-    });
+    const selection = event.selections[event.selections.length - 1];
+    const cursorPos = selection!.active;
 
-    debouncedUpdate();
+    // Immediately show info for the current cursor position (no debounce)
+    this.showInfoAtPosition(cursorPos);
+
+    // Only debounce evaluation when cursor moves past evaluated commands
+    if (cursorPos.isAfterOrEqual(this.state.evaluatedRange.end)) {
+      this.eventCoordinator.emitCursorChange(event);
+    }
   }
 
   private handleTextChange(event: TextDocumentChangeEvent): void {
@@ -138,29 +141,14 @@ export class AdelfaLanguageClient {
       return;
     }
 
-    const debouncedUpdate = this.textChangeDebouncer.debounce(async () => {
-      if (!this.isProcessingUpdate) {
-        this.isProcessingUpdate = true;
-        try {
-          // Find the earliest change position
-          let earliestChangePosition = new Position(event.document.lineCount, 0);
-          for (const change of event.contentChanges) {
-            if (change.range.start.isBefore(earliestChangePosition)) {
-              earliestChangePosition = change.range.start;
-            }
-          }
-
-          await this.undoCommandsUntilPosition(earliestChangePosition);
-          this.state.setFileContent(event.document.getText());
-
-          await this.updateFile();
-        } finally {
-          this.isProcessingUpdate = false;
-        }
+    let earliestChangePosition = new Position(event.document.lineCount, 0);
+    event.contentChanges.forEach(change => {
+      if (change.range.start.isBefore(earliestChangePosition)) {
+        earliestChangePosition = change.range.start;
       }
     });
 
-    debouncedUpdate();
+    this.eventCoordinator.emitTextChange(event, earliestChangePosition);
   }
 
   showOutput(): void {
@@ -211,11 +199,11 @@ export class AdelfaLanguageClient {
   }
 
   private async undoCommandsUntilPosition(position: Position): Promise<void> {
+    await this.commandExecutor.undoCommandsAfterPosition(position);
+
     if (this.state.errorInfo?.range.end.isAfterOrEqual(position)) {
       this.state.setErrorInfo(undefined);
     }
-
-    await this.commandExecutor.undoCommandsAfterPosition(position);
 
     const editor = window.activeTextEditor;
     if (editor) {
@@ -226,13 +214,9 @@ export class AdelfaLanguageClient {
   }
 
   private showInfoAtPosition(position: Position): void {
-    // If there is some error before `position`, we show the error instead.
     if (this.state.errorInfo?.range.start.isBeforeOrEqual(position)) {
       const commandCount = this.state.commands.length;
       const code = [
-        // If we have a command before the input, it's useful to include its
-        // output before the error message so the user knows how to go about
-        // fixing it with the last valid state.
         ...(commandCount > 0 ? [this.state.commands[commandCount - 1]?.output] : []),
         `>> ${this.state.errorInfo.command}`,
         this.state.errorInfo.message,
@@ -257,28 +241,22 @@ export class AdelfaLanguageClient {
   }
 
   private getEndCursorPosition(): Position {
-    const editor = window.activeTextEditor!;
+    const editor = window.activeTextEditor;
+    if (!editor) {
+      return new Position(0, 0);
+    }
     return maxPosition(editor.selection.active, editor.selection.anchor);
   }
 
-  /**
-   * Get the current webview content, only for testing purposes
-   */
   getWebviewContent(): string | null {
     return this.infoProvider.getCurrentContent();
   }
 
-  /**
-   * Check if the webview panel is currently open
-   */
   isWebviewOpen(): boolean {
     return this.infoProvider.isPanelOpen();
   }
 
-  /**
-   * Check if the extension is currently processing commands
-   */
   isProcessing(): boolean {
-    return this.isProcessingUpdate || this.commandExecutor.isProcessing();
+    return this.eventCoordinator.isProcessing() || this.commandExecutor.isProcessing();
   }
 }

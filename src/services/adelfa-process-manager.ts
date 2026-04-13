@@ -50,6 +50,8 @@ export class AdelfaProcessManager {
         if (code !== null && code !== 0) {
           this.cleanup();
           reject(new Error(`Adelfa process exited with code ${code}`));
+        } else {
+          this.cleanup();
         }
       });
     });
@@ -70,11 +72,17 @@ export class AdelfaProcessManager {
 
     return new Promise(resolve => {
       window.showInformationMessage('Ending Adelfa process');
-      this.process!.kill();
-      this.process!.on('exit', () => {
+      const timeout = setTimeout(() => {
+        this.cleanup();
+        resolve();
+      }, 5000);
+
+      this.process!.once('exit', () => {
+        clearTimeout(timeout);
         this.process = undefined;
         resolve();
       });
+      this.process!.kill();
     });
   }
 

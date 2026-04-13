@@ -41,8 +41,7 @@ export class CommandParser {
 
         currentCommand += char;
 
-        // Track string boundaries
-        if (char === '"') {
+        if (char === '"' && (charNum === 0 || lineText[charNum - 1] !== '\\')) {
           inString = !inString;
         }
 

@@ -11,9 +11,19 @@ export class WebviewContent {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Adelfa</title>
+  <script type="module" src="https://unpkg.com/@vscode/webview-ui-toolkit@1.4.0/dist/toolkit.min.js"></script>
   <style>
     code {
-      background-color: var(--vscode-editor-background);
+      background-color: transparent;
+    }
+    #content {
+      margin-bottom: 60px;
+    }
+    .button-container {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      z-index: 1000;
     }
   </style>
 </head>
@@ -25,6 +35,10 @@ export class WebviewContent {
   </div>
 
   <div id="content">
+  </div>
+
+  <div class="button-container">
+    <vscode-button id="restart-button">Restart Adelfa</vscode-button>
   </div>
 
   <script type="module">
@@ -43,7 +57,7 @@ export class WebviewContent {
     });
 
     window.addEventListener("message", async (event) => {
-      message.innerHTML = event.data.message ? \`<p>\${event.data.message}<p>\` : "";
+      message.textContent = event.data.message ?? "";
       content.innerHTML = event.data.code ? highlighter.codeToHtml(event.data.code, {
         lang: "adelfa",
         theme: "${this.theme}"
@@ -51,7 +65,11 @@ export class WebviewContent {
     });
     content.scrollIntoView({ behavior: "smooth", block: "end" });
     const vscode = acquireVsCodeApi();
-    
+
+    document.getElementById("restart-button").addEventListener("click", () => {
+      vscode.postMessage({ command: 'restart' });
+    });
+
     // Send ready message only after highlighter is fully loaded
     vscode.postMessage({ command: 'ready' });
   </script>
