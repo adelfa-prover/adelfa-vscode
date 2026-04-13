@@ -8,7 +8,7 @@
     "LF"
   ],
   "homepage": "https://adelfa-prover.org",
-  "private": true,
+  "private": false,
   "repository": {
     "type": "git",
     "url": "https://github.com/adelfa-prover/adelfa-vscode"
@@ -88,10 +88,6 @@
         "path": "./syntaxes/lf.tmLanguage.json"
       }
     ],
-    "repository": {
-      "type": "git",
-      "url": "https://github.com/adelfa-prover/adelfa-vscode"
-    },
     "commands": [
       {
         "command": "adelfa.endProcess",
